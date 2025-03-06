@@ -116,6 +116,7 @@ void loop() {
           receive_index = 1;
           break;
         } else if (is_stop_byte(incomingByte)) {
+          send_ack();
           stop();
           return;
         }
@@ -190,10 +191,10 @@ void draw_values(uint8_t cpu_temp, uint8_t gpu_temp, uint8_t nvme_temp) {
   tft.drawString(itoa(cpu_temp, buffer, 10), 14, 2, 8);
 
   tft.setTextColor(grey_out ? TFT_DARKGREY : (nvme_temp >= 70 ? TFT_GOLD : TFT_DARKGREY), TFT_BLACK);
-  tft.drawString(itoa(gpu_temp, buffer, 10), 14, 83, 8);
+  tft.drawString(itoa(nvme_temp, buffer, 10), 14, 83, 8);
   
   tft.setTextColor(grey_out ? TFT_DARKGREY : (gpu_temp >= 82 ? TFT_RED : TFT_LIGHTGREY), TFT_BLACK);
-  tft.drawString(itoa(nvme_temp, buffer, 10), 14, 164, 8);
+  tft.drawString(itoa(gpu_temp, buffer, 10), 14, 164, 8);
 }
 
 bool is_backlight_enabled = 1;
