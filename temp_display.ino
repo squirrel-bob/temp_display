@@ -36,6 +36,9 @@ uint8_t update_kf(KalmanFilter* kf, uint8_t current_temp) {
   if (!kf->initialized) {
     kf->current_estimate = current_temp;
     kf->initialized = true;
+  } else if (current_temp > kf->current_estimate) {
+    kf->current_estimate = current_temp;
+    kf->P += kf->Q;
   } else {
     kf->P = kf->P + kf->Q;
     kf->K = kf->P / (kf->P + kf->R);
@@ -183,11 +186,13 @@ void stop() {
 
 void draw_values(uint8_t cpu_temp, uint8_t gpu_temp, uint8_t nvme_temp) {
   char buffer[SERIAL_BUFFER_SIZE];
-  tft.setTextColor(grey_out ? TFT_DARKGREY : TFT_LIGHTGREY, TFT_BLACK);
+  tft.setTextColor(grey_out ? TFT_DARKGREY : (cpu_temp >= 89 ? TFT_RED : TFT_LIGHTGREY), TFT_BLACK);
   tft.drawString(itoa(cpu_temp, buffer, 10), 14, 2, 8);
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+
+  tft.setTextColor(grey_out ? TFT_DARKGREY : (nvme_temp >= 70 ? TFT_GOLD : TFT_DARKGREY), TFT_BLACK);
   tft.drawString(itoa(gpu_temp, buffer, 10), 14, 83, 8);
-  tft.setTextColor(grey_out ? TFT_DARKGREY : TFT_LIGHTGREY, TFT_BLACK);
+  
+  tft.setTextColor(grey_out ? TFT_DARKGREY : (gpu_temp >= 82 ? TFT_RED : TFT_LIGHTGREY), TFT_BLACK);
   tft.drawString(itoa(nvme_temp, buffer, 10), 14, 164, 8);
 }
 
