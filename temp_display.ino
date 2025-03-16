@@ -3,6 +3,9 @@
 */
 #include <SPI.h>
 #include <TFT_eSPI.h>
+#include <BluetoothSerial.h>
+
+#define DEBUG false
 
 #define TFT_ALMOSTBLACK 0x0861 /*  10,  10,  10 */
 #define TFT_ERRORGRAY 0x3183   /*  50,  25,  25 */
@@ -40,6 +43,10 @@ KalmanFilter kalmanFilters[3] = {};
 
 TFT_eSPI tft = TFT_eSPI();
 
+#if DEBUG
+BluetoothSerial SerialBT;
+#endif
+
 void setup(void) {
   tft.init();
   toggleDisplayForce(0);
@@ -51,6 +58,9 @@ void setup(void) {
 
   Serial.setTimeout(READING_TIMEOUT_MS);
   Serial.begin(9600);
+#if DEBUG
+  SerialBT.begin("ESP32_Debug");
+#endif
 }
 
 void resetTemperatures() {
@@ -103,13 +113,15 @@ void resetKalmanFilters() {
 
 void loop() {
   while (!Serial.available()) {
-    if (!areValuesGreyedOut && (millis() - lastUpdate) >= GREY_OUT_DELAY_MS) {
+    if (isBacklightEnabled && !areValuesGreyedOut && (millis() - lastUpdate) >= GREY_OUT_DELAY_MS) {
+      btPrintln("* [timeout]");
       areValuesGreyedOut = true;
       drawValues(prevDisplayedTemps);
     }
   }
   switch (Serial.read()) {
     case DATA_MODE:
+      btPrintln("<- DATA_MODE");
       if (receiveTemperatures(temps)) {
         sendAck();
         update(temps);
@@ -118,10 +130,12 @@ void loop() {
       }
       break;
     case CMD_REPEAT:
+      btPrintln("<- CMD_REPEAT");
       sendAck();
       update(temps);
       break;
     case CMD_RESET:
+      btPrintln("<- CMD_RESET");
       sendAck();
       reset();
       break;
@@ -131,18 +145,22 @@ void loop() {
 }
 
 bool receiveTemperatures(uint8_t* targetTemps) {
+  btPrintln("* [receive]");
   if (Serial.readBytes(tempsBuffer, 3) != 3) {
     return false;
   }
+  btPrintln("<- 3 bytes");
   memcpy(targetTemps, tempsBuffer, 3);
   return true;
 }
 
 inline void sendAck() {
+  btPrintln("---> ACK");
   writeByte(ACK);
 }
 
 inline void sendNak() {
+  btPrintln("---> NAK");
   writeByte(NAK);
 }
 
@@ -153,10 +171,12 @@ inline void writeByte(char byte) {
 }
 
 inline void discardSerialInput() {
+  btPrintln("* [discarding input]");
   while (Serial.available()) Serial.read();
 }
 
 void update(uint8_t* inputTemps) {
+  btPrintln("* [update]");
   uint8_t displayedTemps[3];
   for (uint8_t i = 0; i < 3; i++) {
     displayedTemps[i] = updateKalmanFilter(&kalmanFilters[i], inputTemps[i]);
@@ -168,6 +188,7 @@ void update(uint8_t* inputTemps) {
 }
 
 void drawValues(uint8_t* inputTemps) {
+  btPrintln("* [draw]");
   // cpu
   drawSingleValue(inputTemps[0], 89, 0);
   // nvme
@@ -197,7 +218,6 @@ inline void drawSingleValue(uint8_t value, uint8_t threshold, uint8_t lineIndex)
 }
 
 void reset() {
-  Serial.flush();
   discardSerialInput();
   toggleDisplayForce(0);
   tft.fillScreen(TFT_BLACK);
@@ -213,4 +233,10 @@ inline void toggleDisplay(bool value) {
 inline void toggleDisplayForce(bool value) {
   digitalWrite(TFT_BL, value);
   isBacklightEnabled = value;
+}
+
+inline void btPrintln(String string) {
+#if DEBUG
+  SerialBT.println(string);
+#endif
 }
