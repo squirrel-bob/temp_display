@@ -123,21 +123,21 @@ void loop() {
     case DATA_MODE:
       btPrintln("<- DATA_MODE");
       if (receiveTemperatures(temps)) {
-        sendAck();
         update(temps);
+        sendAck();
       } else {
         sendNak();
       }
       break;
     case CMD_REPEAT:
       btPrintln("<- CMD_REPEAT");
-      sendAck();
       update(temps);
+      sendAck();
       break;
     case CMD_RESET:
       btPrintln("<- CMD_RESET");
-      sendAck();
       reset();
+      sendAck();
       break;
     default:
       sendNak();
@@ -171,6 +171,7 @@ inline void writeByte(char byte) {
 }
 
 inline void discardSerialInput() {
+  return
   btPrintln("* [discarding input]");
   while (Serial.available()) Serial.read();
 }
