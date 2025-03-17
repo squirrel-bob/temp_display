@@ -111,6 +111,9 @@ void resetKalmanFilters() {
   }
 }
 
+bool updateNeeded = false;
+uint8_t displayedTemps[3];
+
 void loop() {
   while (!Serial.available()) {
     if (isBacklightEnabled && !areValuesGreyedOut && (millis() - lastUpdate) >= GREY_OUT_DELAY_MS) {
@@ -119,28 +122,33 @@ void loop() {
       drawValues(prevDisplayedTemps);
     }
   }
-  switch (Serial.read()) {
-    case DATA_MODE:
-      btPrintln("<- DATA_MODE");
-      if (receiveTemperatures(temps)) {
-        update(temps);
+  while (Serial.available()) {
+    switch (Serial.read()) {
+      case DATA_MODE:
+        btPrintln("<- DATA_MODE");
+        if (receiveTemperatures(temps)) {
+          sendAck();
+          prepareUpdate(temps);
+        } else {
+          sendNak();
+        }
+        break;
+      case CMD_REPEAT:
+        btPrintln("<- CMD_REPEAT");
         sendAck();
-      } else {
+        prepareUpdate(temps);
+        break;
+      case CMD_RESET:
+        btPrintln("<- CMD_RESET");
+        sendAck();
+        reset();
+        break;
+      default:
         sendNak();
-      }
-      break;
-    case CMD_REPEAT:
-      btPrintln("<- CMD_REPEAT");
-      update(temps);
-      sendAck();
-      break;
-    case CMD_RESET:
-      btPrintln("<- CMD_RESET");
-      reset();
-      sendAck();
-      break;
-    default:
-      sendNak();
+    }
+  }
+  if (updateNeeded) {
+    update();
   }
 }
 
@@ -165,26 +173,23 @@ inline void sendNak() {
 }
 
 inline void writeByte(char byte) {
-  discardSerialInput();
   Serial.write(byte);
   Serial.flush();
 }
 
-inline void discardSerialInput() {
-  return
-  btPrintln("* [discarding input]");
-  while (Serial.available()) Serial.read();
+void update() {
+  drawValues(displayedTemps);
+  updateNeeded = false;
 }
 
-void update(uint8_t* inputTemps) {
+void prepareUpdate(uint8_t* inputTemps) {
   btPrintln("* [update]");
-  uint8_t displayedTemps[3];
   for (uint8_t i = 0; i < 3; i++) {
     displayedTemps[i] = updateKalmanFilter(&kalmanFilters[i], inputTemps[i]);
   }
   memcpy(prevDisplayedTemps, displayedTemps, sizeof(displayedTemps));
   areValuesGreyedOut = false;
-  drawValues(displayedTemps);
+  updateNeeded = true;
   lastUpdate = millis();
 }
 
@@ -219,7 +224,6 @@ inline void drawSingleValue(uint8_t value, uint8_t threshold, uint8_t lineIndex)
 }
 
 void reset() {
-  discardSerialInput();
   toggleDisplayForce(0);
   tft.fillScreen(TFT_BLACK);
   resetTemperatures();
