@@ -22,11 +22,13 @@
 uint8_t buffer[3];
 uint8_t temps[3];
 uint8_t prevTemps[3];
-uint8_t tempsToDisplay[3];
+uint8_t adjustedTemps[3];
+uint8_t displayedTemps[3];
 
 
 bool areValuesGreyedOut = true;
 bool isBacklightEnabled = false;
+bool displayInitialized = false;
 
 unsigned long lastUpdate = millis();
 
@@ -163,8 +165,8 @@ void update() {
 
 void prepareUpdate() {
   for (uint8_t i = 0; i < 3; i++) {
-    tempsToDisplay[i] = updateKalmanFilter(&kalmanFilters[i], temps[i]);
-    prevTemps[i] = tempsToDisplay[i];
+    adjustedTemps[i] = updateKalmanFilter(&kalmanFilters[i], temps[i]);
+    prevTemps[i] = temps[i];
   }
   areValuesGreyedOut = false;
   updateNeeded = true;
@@ -173,19 +175,27 @@ void prepareUpdate() {
 
 void drawValues() {
   // cpu
-  drawSingleValue(tempsToDisplay[0], 89, 0);
+  drawSingleValue(0, 89);
   // nvme
-  drawSingleValue(tempsToDisplay[1], 70, 1);
+  drawSingleValue(1, 70);
   // gpu
-  drawSingleValue(tempsToDisplay[2], 82, 2);
+  drawSingleValue(2, 82);
+
+  displayInitialized = true;
 
   if (!isBacklightEnabled) {
     toggleDisplay(1);
   }
 }
 
-inline void drawSingleValue(uint8_t value, uint8_t threshold, uint8_t lineIndex) {
-  uint16_t verticalPosition = 2 + 81 * lineIndex;
+
+inline void drawSingleValue(uint8_t tempIndex, uint8_t threshold) {
+  uint8_t value = adjustedTemps[tempIndex];
+  if (value == displayedTemps[tempIndex] && !areValuesGreyedOut && displayInitialized) {
+    return;
+  }
+
+  uint16_t verticalPosition = 2 + 81 * tempIndex;
   if (value == 0) {
     tft.setTextColor(TFT_ALMOSTBLACK, TFT_BLACK);
     tft.drawString("00", 14, verticalPosition);
@@ -198,7 +208,7 @@ inline void drawSingleValue(uint8_t value, uint8_t threshold, uint8_t lineIndex)
   } else if (value >= threshold) {
     color = TFT_RED;
   } else {
-    color = (lineIndex & 1) ? TFT_DARKGREY : TFT_LIGHTGREY;
+    color = (tempIndex & 1) ? TFT_DARKGREY : TFT_LIGHTGREY;
   }
 
   char str[3] = { 0 };
@@ -214,6 +224,7 @@ inline void drawSingleValue(uint8_t value, uint8_t threshold, uint8_t lineIndex)
     str[1] = '0' + ((value / 10) % 10);
     str[2] = '0' + (value % 10);
   }
+
   tft.setTextColor(color, TFT_BLACK);
   tft.drawString(str, 14, verticalPosition);
 }
@@ -222,6 +233,7 @@ void reset() {
   toggleDisplay(0);
   tft.fillScreen(TFT_BLACK);
   resetTemperatures();
+  displayInitialized = false;
 }
 
 inline void toggleDisplay(bool value) {
