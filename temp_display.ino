@@ -19,10 +19,11 @@
 #define ACK 0x06
 #define NAK 0x15
 
-uint8_t temps[3] = { 0, 0, 0 };
-uint8_t prevDisplayedTemps[3] = { 0, 0, 0 };
+uint8_t buffer[3];
+uint8_t temps[3];
+uint8_t prevTemps[3];
+uint8_t tempsToDisplay[3];
 
-uint8_t tempsBuffer[3];
 
 bool areValuesGreyedOut = true;
 bool isBacklightEnabled = false;
@@ -43,31 +44,25 @@ KalmanFilter kalmanFilters[3] = {};
 
 TFT_eSPI tft = TFT_eSPI();
 
-#if DEBUG
-BluetoothSerial SerialBT;
-#endif
-
 void setup(void) {
   tft.init();
-  toggleDisplayForce(0);
+  toggleDisplay(0);
   tft.setRotation(2);  // portrait upside down
   tft.setTextSize(1);
+  tft.setTextFont(8);
   tft.fillScreen(TFT_BLACK);
 
   resetTemperatures();
 
   Serial.setTimeout(READING_TIMEOUT_MS);
   Serial.begin(9600);
-#if DEBUG
-  SerialBT.begin("ESP32_Debug");
-#endif
 }
 
 void resetTemperatures() {
   resetKalmanFilters();
   for (uint8_t i = 0; i < 3; i++) {
     temps[i] = 0;
-    prevDisplayedTemps[i] = 0;
+    prevTemps[i] = 0;
   }
 }
 
@@ -95,12 +90,12 @@ uint8_t updateKalmanFilter(KalmanFilter* kf, uint8_t currentTemp) {
 
   unsigned long currentTime = millis();
   unsigned long timeDiff = currentTime - kf->lastUpdate;
-  float adjustedProcessNoiseCovariance = kf->processNoiseCovariance * (1 + timeDiff / 1000.0);
+  float adjustedProcessNoise = kf->processNoiseCovariance * (1 + timeDiff / 1000.0);
+  float predictedErrorCovariance = kf->errorCovariance + adjustedProcessNoise;
 
-  kf->errorCovariance = kf->errorCovariance + adjustedProcessNoiseCovariance;
-  kf->kalmanGain = kf->errorCovariance / (kf->errorCovariance + kf->measurementNoiseCovariance);
-  kf->currentEstimate = kf->currentEstimate + kf->kalmanGain * ((float)currentTemp - kf->currentEstimate);
-  kf->errorCovariance = (1 - kf->kalmanGain) * kf->errorCovariance;
+  kf->kalmanGain = predictedErrorCovariance / (predictedErrorCovariance + kf->measurementNoiseCovariance);
+  kf->currentEstimate += kf->kalmanGain * ((float)currentTemp - kf->currentEstimate);
+  kf->errorCovariance = (1 - kf->kalmanGain) * predictedErrorCovariance;
   kf->lastUpdate = currentTime;
   return round(kf->currentEstimate);
 }
@@ -112,36 +107,32 @@ void resetKalmanFilters() {
 }
 
 bool updateNeeded = false;
-uint8_t displayedTemps[3];
 
 void loop() {
   while (!Serial.available()) {
     if (isBacklightEnabled && !areValuesGreyedOut && (millis() - lastUpdate) >= GREY_OUT_DELAY_MS) {
-      btPrintln("* [timeout]");
       areValuesGreyedOut = true;
-      drawValues(prevDisplayedTemps);
+      drawValues();
     }
   }
   while (Serial.available()) {
     switch (Serial.read()) {
       case DATA_MODE:
-        btPrintln("<- DATA_MODE");
-        if (receiveTemperatures(temps)) {
+        if (Serial.readBytes(buffer, 3) == 3) {
+          memcpy(temps, buffer, 3);
+          prepareUpdate();
           sendAck();
-          prepareUpdate(temps);
         } else {
           sendNak();
         }
         break;
       case CMD_REPEAT:
-        btPrintln("<- CMD_REPEAT");
+        prepareUpdate();
         sendAck();
-        prepareUpdate(temps);
         break;
       case CMD_RESET:
-        btPrintln("<- CMD_RESET");
-        sendAck();
         reset();
+        sendAck();
         break;
       default:
         sendNak();
@@ -152,23 +143,11 @@ void loop() {
   }
 }
 
-bool receiveTemperatures(uint8_t* targetTemps) {
-  btPrintln("* [receive]");
-  if (Serial.readBytes(tempsBuffer, 3) != 3) {
-    return false;
-  }
-  btPrintln("<- 3 bytes");
-  memcpy(targetTemps, tempsBuffer, 3);
-  return true;
-}
-
 inline void sendAck() {
-  btPrintln("---> ACK");
   writeByte(ACK);
 }
 
 inline void sendNak() {
-  btPrintln("---> NAK");
   writeByte(NAK);
 }
 
@@ -178,70 +157,74 @@ inline void writeByte(char byte) {
 }
 
 void update() {
-  drawValues(displayedTemps);
+  drawValues();
   updateNeeded = false;
 }
 
-void prepareUpdate(uint8_t* inputTemps) {
-  btPrintln("* [update]");
+void prepareUpdate() {
   for (uint8_t i = 0; i < 3; i++) {
-    displayedTemps[i] = updateKalmanFilter(&kalmanFilters[i], inputTemps[i]);
+    tempsToDisplay[i] = updateKalmanFilter(&kalmanFilters[i], temps[i]);
+    prevTemps[i] = tempsToDisplay[i];
   }
-  memcpy(prevDisplayedTemps, displayedTemps, sizeof(displayedTemps));
   areValuesGreyedOut = false;
   updateNeeded = true;
   lastUpdate = millis();
 }
 
-void drawValues(uint8_t* inputTemps) {
-  btPrintln("* [draw]");
+void drawValues() {
   // cpu
-  drawSingleValue(inputTemps[0], 89, 0);
+  drawSingleValue(tempsToDisplay[0], 89, 0);
   // nvme
-  drawSingleValue(inputTemps[1], 70, 1);
+  drawSingleValue(tempsToDisplay[1], 70, 1);
   // gpu
-  drawSingleValue(inputTemps[2], 82, 2);
+  drawSingleValue(tempsToDisplay[2], 82, 2);
 
-  toggleDisplay(1);
+  if (!isBacklightEnabled) {
+    toggleDisplay(1);
+  }
 }
 
 inline void drawSingleValue(uint8_t value, uint8_t threshold, uint8_t lineIndex) {
   uint16_t verticalPosition = 2 + 81 * lineIndex;
   if (value == 0) {
     tft.setTextColor(TFT_ALMOSTBLACK, TFT_BLACK);
-    tft.drawString("00", 14, verticalPosition, 8);
+    tft.drawString("00", 14, verticalPosition);
     return;
   }
-  char str[3];
-  uint16_t color = (lineIndex % 2 == 0) ? TFT_LIGHTGREY : TFT_DARKGREY;
+
+  uint16_t color;
   if (areValuesGreyedOut) {
     color = TFT_ERRORGRAY;
   } else if (value >= threshold) {
     color = TFT_RED;
+  } else {
+    color = (lineIndex & 1) ? TFT_DARKGREY : TFT_LIGHTGREY;
+  }
+
+  char str[3] = { 0 };
+
+  if (value < 10) {
+    str[0] = '0';
+    str[1] = '0' + value;
+  } else if (value < 100) {
+    str[0] = '0' + (value / 10);
+    str[1] = '0' + (value % 10);
+  } else {
+    str[0] = '0' + (value / 100);
+    str[1] = '0' + ((value / 10) % 10);
+    str[2] = '0' + (value % 10);
   }
   tft.setTextColor(color, TFT_BLACK);
-  tft.drawString(itoa(value, str, 10), 14, verticalPosition, 8);
+  tft.drawString(str, 14, verticalPosition);
 }
 
 void reset() {
-  toggleDisplayForce(0);
+  toggleDisplay(0);
   tft.fillScreen(TFT_BLACK);
   resetTemperatures();
 }
 
 inline void toggleDisplay(bool value) {
-  if (value != isBacklightEnabled) {
-    toggleDisplayForce(value);
-  }
-}
-
-inline void toggleDisplayForce(bool value) {
   digitalWrite(TFT_BL, value);
   isBacklightEnabled = value;
-}
-
-inline void btPrintln(String string) {
-#if DEBUG
-  SerialBT.println(string);
-#endif
 }
