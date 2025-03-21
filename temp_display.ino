@@ -57,7 +57,10 @@ void setup(void) {
   resetTemperatures();
 
   Serial.setTimeout(READING_TIMEOUT_MS);
-  Serial.begin(9600);
+  Serial.begin(230400);
+  delay(50);
+  discardSerialInput();
+  Serial.flush();
 }
 
 void resetTemperatures() {
@@ -154,8 +157,13 @@ inline void sendNak() {
 }
 
 inline void writeByte(char byte) {
+  discardSerialInput();
   Serial.write(byte);
   Serial.flush();
+}
+
+inline void discardSerialInput() {
+  while (Serial.available()) Serial.read();
 }
 
 void update() {
@@ -230,6 +238,7 @@ inline void drawSingleValue(uint8_t tempIndex, uint8_t threshold) {
 }
 
 void reset() {
+  discardSerialInput();
   toggleDisplay(0);
   tft.fillScreen(TFT_BLACK);
   resetTemperatures();
